@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Meeting Notes Generator</title>
+    <style>
+        #drop-area {
+            border: 2px dashed #aaa;
+            padding: 20px;
+            text-align: center;
+            margin: 20px;
+            font-family: Arial, sans-serif;
+        }
+        #output {
+            white-space: pre-wrap;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 20px;
+            font-family: Arial, sans-serif;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 15px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Meeting Notes Generator</h1>
+    <div id="drop-area">Drag and drop a file here</div>
+    <button id="summarize-btn">Get Meeting Notes</button>
+    <div id="output"></div>
+    <script>
+        let droppedFile = null;
+        const dropArea = document.getElementById("drop-area");
+
+        dropArea.addEventListener("dragover", function(e) {
+            e.preventDefault();
+            dropArea.style.background = "#ddd";
+        });
+
+        dropArea.addEventListener("dragleave", function(e) {
+            dropArea.style.background = "";
+        });
+
+        dropArea.addEventListener("drop", function(e) {
+            e.preventDefault();
+            dropArea.style.background = "";
+            if (e.dataTransfer.files.length > 0) {
+                droppedFile = e.dataTransfer.files[0];
+                dropArea.innerText = "File Selected: " + droppedFile.name;
+            }
+        });
+
+        document.getElementById("summarize-btn").addEventListener("click", function() {
+            if (!droppedFile) {
+                alert("Please drag and drop a file first.");
+                return;
+            }
+            const formData = new FormData();
+            formData.append("file", droppedFile);
+            fetch("/summarize", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const outputDiv = document.getElementById("output");
+                if (data.summary) {
+                    outputDiv.innerText = "=== Meeting Notes ===\n" + data.summary;
+                } else {
+                    outputDiv.innerText = "Error: " + data.error;
+                }
+            })
+            .catch(error => {
+                console.error(error);
+            });
+        });
+    </script>
+</body>
+</html>
