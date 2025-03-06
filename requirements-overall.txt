@@ -1,0 +1,43 @@
+flask
+git
+python-3.13
+ffmpeg
+ollama should be installed separately - command prompt command to start in a new tab - start "Ollama Serve" cmd /k "ollama serve"
+
+
+
+
+python -m venv local-notes; local-notes\Scripts\activate; 
+winget install --id Git.Git
+winget install "FFmpeg (Essentials Build)
+cd local-notes
+git clone https://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@github.com/vignesh09/local-meeting-notes.git; 
+cd local-meeting-notes; python -m pip install --upgrade pip;
+pip install git+https://github.com/openai/whisper.git
+; 
+pip install Flask
+
+python app.py
+
+
+git --version >nul 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo Git not found. Installing Git...
+    winget install --id Git.Git
+    echo Git installation completed. Please restart your command prompt to use Git.
+) ELSE (
+    echo Git is already installed.
+    git --version
+)
+
+
+
+python --version >nul 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo Python not found. Installing Python 3.13...
+    winget install --id Python.Python.3.13
+    echo Python 3.13 installation completed. Please restart your command prompt.
+) ELSE (
+    echo Python is already installed.
+    python --version
+)
