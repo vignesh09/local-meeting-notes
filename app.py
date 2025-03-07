@@ -27,6 +27,11 @@ from google.oauth2 import service_account
 
 ###################################################################
 
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import threading
+
+
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), "uploads")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -146,35 +151,43 @@ def index():
     return render_template("index.html")
 
 @app.route("/summarize", methods=["POST"])
-def summarize():
-    start_time = time.time()
-    global transcript
-    # Ensure a file is provided
+def summarize_route():
+    # Simulate the summarize function
     if "file" not in request.files:
         return jsonify({"error": "No file provided."}), 400
     file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"error": "No selected file."}), 400
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    file.save(file_path)
+    
+    return summarize(file_path)
+
+
+def summarize(file_path):
+    start_time = time.time()
+    global transcript
+    logging.debug("processing the file in this path: ")
+    logging.debug(file_path)
+    # # Ensure a file is provided
+    # if "file" not in request.files:
+    #     return jsonify({"error": "No file provided."}), 400
+    # file = request.files["file"]
+    # if file.filename == "":
+    #     return jsonify({"error": "No selected file."}), 400
 
     # If the file is a transcript (.txt), read its contents
-    if file.filename.lower().endswith(".txt"):
+    if file_path.lower().endswith(".txt"):
         try:
-            
-            transcript = file.read().decode("utf-8")
+            with open(file_path, "r") as f:
+                transcript = f.read()
         except Exception as e:
             return jsonify({"error": "Error reading transcript file: " + str(e)}), 500
-    elif file.filename.lower().endswith(".docx"):
+    elif file_path.lower().endswith(".docx"):
         try:
-            doc = Document(file)
+            doc = Document(file_path)
             transcript = "\n".join([para.text for para in doc.paragraphs])
         except Exception as e:
             return jsonify({"error": "Error reading DOCX file: " + str(e)}), 500
     else:
-        # Otherwise assume it is an audio file and save it
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        file.save(file_path)
-        if not os.path.exists(file_path):
-            return jsonify({"error": "Uploaded file not found."}), 400
         try:
             # Load the Whisper model (adjust the model size as needed)
             whisper_model = whisper.load_model("base")
@@ -261,6 +274,32 @@ def send_calendar_invite():
     except Exception as e:
         return jsonify({"error": f"Failed to send calendar invite: {str(e)}"}), 500
 
+class NewFileHandler(FileSystemEventHandler):
+    def on_created(self, event):
+        with app.app_context():
+            if not event.is_directory:
+                current_time = time.time()
+                file_creation_time = os.path.getctime(event.src_path)
+                if (current_time - file_creation_time) <= 300:  # 300 seconds = 5 minutes
+                    logging.debug(f"New file created")
+                    logging.debug(str(event.src_path))
+                    summarize(event.src_path)
+
+def start_file_monitoring(path_to_watch):
+    event_handler = NewFileHandler()
+    observer = Observer()
+    observer.schedule(event_handler, path=path_to_watch, recursive=False)
+    observer.start()
+    print(f"Started monitoring new files in: {path_to_watch}")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
 
 if __name__ == "__main__":
+    path_to_watch = "C:\\Users\\"+os.getenv("USERNAME")+"\\Videos\\Captures"
+    monitoring_thread = threading.Thread(target=start_file_monitoring, args=(path_to_watch,), daemon=True)
+    monitoring_thread.start()
     app.run(debug=True)
