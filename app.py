@@ -41,6 +41,7 @@ logging.debug("Logger enabled")
 
 transcript = None
 meeting_notes = None
+start_time = None
 ###########################################Calendar Functions###############################################
 # Scopes required for Gmail and Calendar
 SCOPES = [
@@ -115,10 +116,10 @@ def create_calendar_invite(calendar_service, recipient_email, sender_email):
     """
     # Set event details – customize the timing as needed.
     global meeting_notes
-    now = datetime.datetime.utcnow()
+    global start_time
     # Example: schedule event for tomorrow from 09:00 to 10:00 UTC.
-    event_start = (now + datetime.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-    event_end = event_start + datetime.timedelta(hours=1)
+    event_end = start_time
+    event_start = event_end - datetime.timedelta(minutes=10)
     
     event = {
         "summary": "Meeting Invitation: Generated Meeting Notes",
@@ -163,6 +164,7 @@ def summarize_route():
 
 
 def summarize(file_path):
+    global start_time
     start_time = time.time()
     global transcript
     logging.debug("processing the file in this path: ")
@@ -172,7 +174,7 @@ def summarize(file_path):
     #     return jsonify({"error": "No file provided."}), 400
     # file = request.files["file"]
     # if file.filename == "":
-    #     return jsonify({"error": "No selected file."}), 400
+    #     return jsonify({"error": "No selected file."}), 400clea
 
     # If the file is a transcript (.txt), read its contents
     if file_path.lower().endswith(".txt"):
@@ -190,9 +192,12 @@ def summarize(file_path):
     else:
         try:
             # Load the Whisper model (adjust the model size as needed)
-            whisper_model = whisper.load_model("base")
+            logging.debug("Debugging using Whisper")
+            whisper_model = whisper.load_model("large-v2")
             result = whisper_model.transcribe(file_path)
             transcript = result.get("text", "")
+            logging.debug("#######Transcript##############")
+            logging.debug(transcript)
         except Exception as e:
             return jsonify({"error": "Transcription failed: " + str(e)}), 500
 
@@ -233,9 +238,8 @@ def summarize(file_path):
         if response.status_code == 200:
             response_data = response.json()
             meeting_notes = response_data.get("response", "No summary generated.")
-            time_taken = "#######Time Taken##########"+str(time.time() - start_time)
             send_calendar_invite()
-            return jsonify({"summary": meeting_notes+time_taken}), 200
+            return jsonify({"summary": meeting_notes}), 200
         else:
             return jsonify({"error": f"Failed to generate meeting notes. Status code: {response.status_code}"}), 500
     except Exception as e:
@@ -263,7 +267,7 @@ def send_calendar_invite():
         # sample_transcript = "This is the meeting transcript..."
         # sample_meeting_notes = "Meeting notes: Discussed project updates, action items, and next steps."
         sender = "vignez.sr@gmail.com"
-        recipient = "vigneshrajendran.iift1820@gmail.com"
+        recipient = "vignez.sr@gmail.com"
         
         # Send the email with transcript attachment.
         send_email_with_transcript(gmail_service, sender, recipient)
