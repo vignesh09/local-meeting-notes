@@ -8,6 +8,8 @@ import subprocess
 from flask import Flask, request, render_template, jsonify
 from docx import Document
 import logging
+from urllib.request import urlopen
+import urllib
 ######################################Calendar Events#############
 import base64
 import os
@@ -27,9 +29,7 @@ from google.oauth2 import service_account
 
 ###################################################################
 
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-import threading
+
 
 
 app = Flask(__name__)
@@ -42,12 +42,17 @@ logging.debug("Logger enabled")
 transcript = None
 meeting_notes = None
 start_time = None
+
+
+
 ###########################################Calendar Functions###############################################
 # Scopes required for Gmail and Calendar
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/calendar.events'
 ]
+
+
 
 def get_google_services():
     """
@@ -165,18 +170,12 @@ def summarize_route():
 
 def summarize(file_path):
     global start_time
-    start_time = time.time()
+    # Use datetime.now() instead of time.time() to get a datetime object
+    start_time = datetime.datetime.now()
     global transcript
-    logging.debug("processing the file in this path: ")
+    logging.debug("Processing the file in this path:")
     logging.debug(file_path)
-    # # Ensure a file is provided
-    # if "file" not in request.files:
-    #     return jsonify({"error": "No file provided."}), 400
-    # file = request.files["file"]
-    # if file.filename == "":
-    #     return jsonify({"error": "No selected file."}), 400clea
 
-    # If the file is a transcript (.txt), read its contents
     if file_path.lower().endswith(".txt"):
         try:
             with open(file_path, "r") as f:
@@ -186,14 +185,14 @@ def summarize(file_path):
     elif file_path.lower().endswith(".docx"):
         try:
             doc = Document(file_path)
+            logging.debug(doc)
             transcript = "\n".join([para.text for para in doc.paragraphs])
         except Exception as e:
             return jsonify({"error": "Error reading DOCX file: " + str(e)}), 500
     else:
         try:
-            # Load the Whisper model (adjust the model size as needed)
             logging.debug("Debugging using Whisper")
-            whisper_model = whisper.load_model("large-v2")
+            whisper_model = whisper.load_model("base")
             result = whisper_model.transcribe(file_path)
             transcript = result.get("text", "")
             logging.debug("#######Transcript##############")
@@ -201,12 +200,11 @@ def summarize(file_path):
         except Exception as e:
             return jsonify({"error": "Transcription failed: " + str(e)}), 500
 
-    # Build the prompt for summarization
     prompt = (
         """You are an assistant that summarizes meeting transcripts. Your primary goal is to produce a concise, clear, and professional summary of the meeting while extracting key action items. Use the following guidelines to craft your output:
 
 1. **Meeting Summary:**
-   - Provide a brief, yet comprehensive, overview of the meeting.
+   - Provide a comprehensive, overview of the meeting.
    - Identify and describe the main objectives and discussion points.
    - Highlight decisions made, conclusions reached, and any critical context shared during the meeting.
    - Ensure the summary is well-organized.
@@ -219,6 +217,8 @@ def summarize(file_path):
      - The person(s) responsible (if mentioned).
      - Any deadlines or timeframes specified.
    - If certain tasks lack details (such as the responsible person or due date), note the task clearly and leave placeholders if necessary.
+
+   Be as detailed as possible.
 
 **Transcript:**""" + transcript
     )
@@ -245,7 +245,6 @@ def summarize(file_path):
     except Exception as e:
         return jsonify({"error": "Summarization failed: " + str(e)}), 500
 
-
 @app.route("/send-calendar-invite", methods=["GET"])
 def send_calendar_invite():
     # # Example usage
@@ -267,7 +266,7 @@ def send_calendar_invite():
         # sample_transcript = "This is the meeting transcript..."
         # sample_meeting_notes = "Meeting notes: Discussed project updates, action items, and next steps."
         sender = "vignez.sr@gmail.com"
-        recipient = "vignez.sr@gmail.com"
+        recipient = "vigneshrajendran.iift1820@gmail.com"
         
         # Send the email with transcript attachment.
         send_email_with_transcript(gmail_service, sender, recipient)
@@ -278,32 +277,5 @@ def send_calendar_invite():
     except Exception as e:
         return jsonify({"error": f"Failed to send calendar invite: {str(e)}"}), 500
 
-class NewFileHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        with app.app_context():
-            if not event.is_directory:
-                current_time = time.time()
-                file_creation_time = os.path.getctime(event.src_path)
-                if (current_time - file_creation_time) <= 300:  # 300 seconds = 5 minutes
-                    logging.debug(f"New file created")
-                    logging.debug(str(event.src_path))
-                    summarize(event.src_path)
-
-def start_file_monitoring(path_to_watch):
-    event_handler = NewFileHandler()
-    observer = Observer()
-    observer.schedule(event_handler, path=path_to_watch, recursive=False)
-    observer.start()
-    print(f"Started monitoring new files in: {path_to_watch}")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
-
 if __name__ == "__main__":
-    path_to_watch = "C:\\Users\\"+os.getenv("USERNAME")+"\\Videos\\Captures"
-    monitoring_thread = threading.Thread(target=start_file_monitoring, args=(path_to_watch,), daemon=True)
-    monitoring_thread.start()
     app.run(debug=True)
