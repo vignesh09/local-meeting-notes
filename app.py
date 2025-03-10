@@ -5,33 +5,22 @@ import requests
 import json
 import time
 import subprocess
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, redirect, url_for
 from docx import Document
 import logging
-from urllib.request import urlopen
-import urllib
-######################################Calendar Events#############
-import base64
-import os
 import datetime
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
-
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 
-###################################################################
 
-
-
-
+# Initialize Flask app
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), "uploads")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -39,20 +28,24 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 logging.basicConfig(level=logging.DEBUG)
 logging.debug("Logger enabled")
 
+# Global variables for transcript and meeting notes
 transcript = None
 meeting_notes = None
 start_time = None
 
+# Global settings dictionary for user-configurable settings
+app_settings = {
+    "timezone": "UTC",
+    "sender_email": "vignez.sr@gmail.com",
+    "model": "gemma:7b"
+}
 
-
-###########################################Calendar Functions###############################################
+########################################### Calendar Functions ###############################################
 # Scopes required for Gmail and Calendar
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/calendar.events'
 ]
-
-
 
 def get_google_services():
     """
@@ -69,10 +62,8 @@ def get_google_services():
         else:
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=8080)
-        # Save the credentials for future runs.
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
-
     gmail_service = build('gmail', 'v1', credentials=creds)
     calendar_service = build('calendar', 'v3', credentials=creds)
     return gmail_service, calendar_service
@@ -83,13 +74,11 @@ def send_email_with_transcript(gmail_service, sender_email, recipient_email):
     """
     global transcript
     global meeting_notes
-    # Create the MIME message
     message = MIMEMultipart("mixed")
     message["to"] = recipient_email
     message["from"] = sender_email
     message["subject"] = "Meeting Transcript and Invitation"
 
-    # Email body containing meeting notes
     body_text = f"""Hello,
 
 Please find attached the transcript of our meeting.
@@ -102,12 +91,10 @@ Team Local Notes.
 """
     message.attach(MIMEText(body_text, "plain"))
 
-    # Attach the transcript as a text file.
     transcript_attachment = MIMEText(transcript, "plain")
     transcript_attachment.add_header("Content-Disposition", "attachment", filename="transcript.txt")
     message.attach(transcript_attachment)
 
-    # Encode the message and send via Gmail API.
     raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
     message_body = {"raw": raw_message}
     sent_message = gmail_service.users().messages().send(userId="me", body=message_body).execute()
@@ -119,10 +106,9 @@ def create_calendar_invite(calendar_service, recipient_email, sender_email):
     Creates a calendar event (invite) using the Calendar API.
     The event will be sent as an invitation to the recipient.
     """
-    # Set event details – customize the timing as needed.
     global meeting_notes
     global start_time
-    # Example: schedule event for tomorrow from 09:00 to 10:00 UTC.
+    # Use the configured timezone from settings if needed. Here, we assume UTC.
     event_end = start_time
     event_start = event_end - datetime.timedelta(minutes=10)
     
@@ -131,11 +117,11 @@ def create_calendar_invite(calendar_service, recipient_email, sender_email):
         "description": meeting_notes,
         "start": {
             "dateTime": event_start.isoformat() + "Z",
-            "timeZone": "UTC",
+            "timeZone": app_settings["timezone"],
         },
         "end": {
             "dateTime": event_end.isoformat() + "Z",
-            "timeZone": "UTC",
+            "timeZone": app_settings["timezone"],
         },
         "attendees": [
             {"email": recipient_email},
@@ -147,32 +133,45 @@ def create_calendar_invite(calendar_service, recipient_email, sender_email):
     created_event = calendar_service.events().insert(
         calendarId="primary",
         body=event,
-        sendUpdates="all"  # This flag makes sure the invitation is emailed.
+        sendUpdates="all"
     ).execute()
     logging.debug("Calendar event created:")
     logging.debug(created_event.get("htmlLink"))
+
+########################################### Flask Routes ###############################################
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    global app_settings
+    if request.method == "POST":
+        tz = request.form.get("timezone")
+        sender = request.form.get("sender_email")
+        model = request.form.get("model")
+        if tz:
+            app_settings["timezone"] = tz
+        if sender:
+            app_settings["sender_email"] = sender
+        if model:
+            app_settings["model"] = model
+        return redirect(url_for("settings"))
+    return render_template("settings.html", settings=app_settings)
+
 @app.route("/summarize", methods=["POST"])
 def summarize_route():
-    # Simulate the summarize function
     if "file" not in request.files:
         return jsonify({"error": "No file provided."}), 400
     file = request.files["file"]
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
     file.save(file_path)
-    
     return summarize(file_path)
 
-
 def summarize(file_path):
-    global start_time
-    # Use datetime.now() instead of time.time() to get a datetime object
+    global start_time, transcript, meeting_notes
     start_time = datetime.datetime.now()
-    global transcript
     logging.debug("Processing the file in this path:")
     logging.debug(file_path)
 
@@ -185,17 +184,18 @@ def summarize(file_path):
     elif file_path.lower().endswith(".docx"):
         try:
             doc = Document(file_path)
-            logging.debug(doc)
             transcript = "\n".join([para.text for para in doc.paragraphs])
         except Exception as e:
             return jsonify({"error": "Error reading DOCX file: " + str(e)}), 500
     else:
         try:
-            logging.debug("Debugging using Whisper")
-            whisper_model = whisper.load_model("base")
+            logging.debug("Using Whisper for transcription")
+            # Use the model from settings
+            model_name = app_settings["model"]
+            whisper_model = whisper.load_model("base")  # Change if you support other models dynamically
             result = whisper_model.transcribe(file_path)
             transcript = result.get("text", "")
-            logging.debug("#######Transcript##############")
+            logging.debug("Transcript:")
             logging.debug(transcript)
         except Exception as e:
             return jsonify({"error": "Transcription failed: " + str(e)}), 500
@@ -204,26 +204,26 @@ def summarize(file_path):
         """You are an assistant that summarizes meeting transcripts. Your primary goal is to produce a concise, clear, and professional summary of the meeting while extracting key action items. Use the following guidelines to craft your output:
 
 1. **Meeting Summary:**
-   - Provide a comprehensive, overview of the meeting.
+   - Provide a comprehensive overview of the meeting.
    - Identify and describe the main objectives and discussion points.
-   - Highlight decisions made, conclusions reached, and any critical context shared during the meeting.
+   - Highlight decisions made, conclusions reached, and any critical context.
    - Ensure the summary is well-organized.
 
 2. **Action Items:**
-   - Extract all actionable tasks mentioned during the meeting.
+   - Extract all actionable tasks mentioned.
    - List each action item using bullet points.
    - For each action item, include:
      - A clear description of the task.
      - The person(s) responsible (if mentioned).
      - Any deadlines or timeframes specified.
-   - If certain tasks lack details (such as the responsible person or due date), note the task clearly and leave placeholders if necessary.
+   - If details are missing, note placeholders as needed.
 
-   Be as detailed as possible.
+Be as detailed as possible.
 
 **Transcript:**""" + transcript
     )
     payload = {
-        "model": "gemma:7b",
+        "model": app_settings["model"],
         "prompt": prompt,
         "stream": False,
         "options": {
@@ -232,13 +232,12 @@ def summarize(file_path):
         }
     }
     try:
-        global meeting_notes
         url = "http://localhost:11434/api/generate"
         response = requests.post(url, json=payload)
         if response.status_code == 200:
             response_data = response.json()
             meeting_notes = response_data.get("response", "No summary generated.")
-            send_calendar_invite()
+            send_calendar_invite()  # This sends both email and calendar invite
             return jsonify({"summary": meeting_notes}), 200
         else:
             return jsonify({"error": f"Failed to generate meeting notes. Status code: {response.status_code}"}), 500
@@ -247,33 +246,15 @@ def summarize(file_path):
 
 @app.route("/send-calendar-invite", methods=["GET"])
 def send_calendar_invite():
-    # # Example usage
-    # file_path = 'file.txt'
-    # file_name = 'example.txt'
-    # file_id = upload_file_to_drive(file_path, file_name)
-
-    # event_title = 'Event with Attachment'
-    # event_description = 'This event has an attached file.'
-
-    # create_event_with_attachment(file_id, event_title, event_description)
-    # return jsonify({"error": f"Failed to send calendar invite: {str(1234)}"}), 500
-
     try:
         gmail_service, calendar_service = get_google_services()
-        global meeting_notes
-        global transcript
-        # Sample data (replace with your dynamic transcript and meeting notes)
-        # sample_transcript = "This is the meeting transcript..."
-        # sample_meeting_notes = "Meeting notes: Discussed project updates, action items, and next steps."
-        sender = "vignez.sr@gmail.com"
-        recipient = "vigneshrajendran.iift1820@gmail.com"
+        global meeting_notes, transcript
+        sender = app_settings["sender_email"]
+        recipient = sender  # For testing, using the sender email as recipient; change as needed.
         
-        # Send the email with transcript attachment.
         send_email_with_transcript(gmail_service, sender, recipient)
-        
-        # Create a calendar event that sends an invite.
         create_calendar_invite(calendar_service, recipient, sender)
-        return jsonify({"result": f"successful"}),200
+        return jsonify({"result": "successful"}), 200
     except Exception as e:
         return jsonify({"error": f"Failed to send calendar invite: {str(e)}"}), 500
 
