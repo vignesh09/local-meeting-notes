@@ -101,6 +101,9 @@ Follow these steps to set up your environment from scratch:
    /bye
    ```
 
+6. **Get Credentials.json**
+   For using the Google authentication user your Google console to create a project and enable authentication API & Services and get oAuth client id and secret.
+
 ## Running the Application
 
 1. **Start the Flask App**
